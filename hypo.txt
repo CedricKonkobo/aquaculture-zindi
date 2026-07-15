@@ -1,0 +1,45 @@
+1. Priorité pour la suite : noter ça comme hypothèse haute priorité (le decalage de prior, pas le déséquilibre en lui-même) — 
+c'est la variable la moins contrôlée et la plus susceptible d'expliquer un écart CV/leaderboard
+
+2. Hypothèse  — réduire la redondance des bandes brutes.
+Observation : re2≈re3≈nir≈nira (r>0.99) et swir1≈swir2 (r>0.99, vu précédemment). Ce sont 6 colonnes qui portent quasi le même signal.
+Action : dans features.py, ne garder qu'un représentant par famille (ex. nir + swir1) pour les stats agrégées brutes, 
+au lieu des 6 séparément. Moins de bruit, modèle plus léger, pas de perte d'info (les indices spectraux capturent déjà les 
+combinaisons utiles)
+
+3. Hypothèse  — la variance (std) est aussi discriminante que la moyenne.
+Observation : pour nir/nira/swir1/swir2/VH/VV, l'écart-type classe 1 est 2 à 3× plus petit que classe 
+0 (eau = signal stable dans le temps, "autre" = très variable). Tu as déjà _std dans tes features agrégées — 
+donc c'est déjà capté. Rien à ajouter, 
+mais bon à savoir : ne pas la retirer si jamais tu simplifies les features (ex. hypothèse 1)
+
+4. Hypothèse 3 — VH/VV apportent un signal indépendant de l'optique.
+Radar et optique sont deux capteurs physiquement différents, tous deux discriminants.
+ Bon candidat pour un modèle "radar seul" en ensemble/blend plus tard (robuste quand l'optique manque beaucoup), 
+déjà noté dans les pistes d'amélioration précédentes.
+
+5. Résumé étape 5 : confirme la robustesse de l'approche actuelle, ne génère pas de nouvelle hypothèse de feature — 
+juste un point de vigilance (perf potentiellement plus faible sur fenêtres nov-jan) à vérifier après le premier modèle.
+
+Hypothèse concrète — ajouter une feature ndre_frac (fraction de mois avec NDRE < seuil), 
+sur le modèle de water_frac. Comme suggéré par la consigne : NDRE domine quasi autant que MNDWI,
+ donc mérite le même traitement en fraction/seuil, pas juste en moyenne agrégée.
+
+Hypothèse à creuser plus tard (pas maintenant) — le sous-groupe classe 0 bimodal. 
+Ça pourrait être des zones humides naturelles, rizières, ou eau temporaire confondues
+ avec des bassins. Si le modèle a des faux positifs après le premier entraînement, 
+ regarder si ces erreurs correspondent à ce sous-groupe (analyse d'erreurs, pas EDA).
+
+Redondance exacte à corriger (priorité haute) :
+
+VH_VV_ratio_mean = RVI_mean (r=1,000, littéralement dupliqué) → supprimer l'un des deux.
+re2/re3/nir/nira (r>0,99), swir1/swir2 (0,977), blue/green (0,964) → un représentant par groupe suffit.
+brightness_mean ≈ re1_mean (0,957) — inattendu (brightness est censé résumer blue/green/red/nir), mais empiriquement 
+redondant → candidat à suppression.
+
+Hypothèse à tester à l'étape Feature Engineering : réduire le groupe des 5 indices eau/végétation à 2 
+représentants (ex. MNDWI + NDRE, capteurs/formules les plus différents) plutôt que les 5, et comparer 
+le F1/AUC OOF. Attendu : gain neutre à léger sur le score (le signal est déjà capté), mais modèle plus 
+interprétable et moins de risque de surapprentissage sur du bruit corrélé.
+VH_VV_diff reste le meilleur complément non-redondant (corrélation modérée avec les indices optiques, capteur différent) — 
+à garder en priorité si tu dois trancher entre plusieurs features proches.

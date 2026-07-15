@@ -1,0 +1,39 @@
+# Configuration de exp001_baseline
+# Reproduction de la toute première baseline (leaderboard Zindi ~100e place).
+
+experiment:
+  name: exp001_baseline
+  description: >
+    Baseline LightGBM avec augmentation par masquage temporel (fenêtre 4-6 mois +
+    trous nuageux S2) et features statistiques invariantes à la fenêtre.
+  seed: 42
+
+augmentation:
+  n_replicas: 10
+  window_min_months: 4
+  window_max_months: 6
+  s2_gap_distribution: [0.735, 0.224, 0.036, 0.005]
+
+model:
+  type: LightGBM
+  objective: binary
+  learning_rate: 0.03
+  num_leaves: 31
+  min_child_samples: 40
+  feature_fraction: 0.6
+  bagging_fraction: 0.8
+  bagging_freq: 1
+  lambda_l1: 0.5
+  lambda_l2: 5.0
+  n_estimators: 1200
+  early_stopping_rounds: 100
+
+validation:
+  scheme: StratifiedGroupKFold
+  n_splits: 5
+  group_by: original_sample_id
+  threshold: 0.5
+
+output:
+  submission_file: exp001_baseline_submission.csv
+  model_file: exp001_baseline.joblib
