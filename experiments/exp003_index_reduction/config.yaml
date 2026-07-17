@@ -1,0 +1,57 @@
+# Configuration de exp003_index_reduction
+# Test de l'hypothèse H3 (EDA étapes 6-7) : réduction des indices
+# eau/végétation très corrélés entre eux à 2 représentants.
+
+experiment:
+  name: exp003_index_reduction
+  hypothesis: >
+    H3 — NDVI, NDWI, MNDWI, NDRE, AWEI ont une forte séparabilité individuelle
+    (0.90-0.95) mais sont corrélés entre eux à 0.95-0.99 (étape 7) : un seul
+    signal mesuré 5 fois. Garder seulement MNDWI + NDRE (les 2 indices les
+    plus présents en tête des 3 méthodes d'importance, étape 8) devrait
+    alléger le modèle sans perte de score mesurable.
+  baseline_reference: exp001_baseline   # H5/exp002 rejetée, donc référence = exp001
+  seed: [42, 1, 7]   # multi-seed dès le départ, suite à la leçon de H5
+
+changes_vs_baseline:
+  - "src.features -> src.features_v3 (DROP_SERIES = {NDVI, NDWI, AWEI}, garde MNDWI + NDRE)"
+  - "bandes brutes et autres indices (NDMI, NDWI2, BSI, RVI, radar) inchangés"
+  - "aucun autre changement (mêmes hyperparamètres, même augmentation, même CV)"
+
+augmentation:
+  n_replicas: 10
+  window_min_months: 4
+  window_max_months: 6
+  s2_gap_distribution: [0.735, 0.224, 0.036, 0.005]
+
+model:
+  type: LightGBM
+  objective: binary
+  learning_rate: 0.03
+  num_leaves: 31
+  min_child_samples: 40
+  feature_fraction: 0.6
+  bagging_fraction: 0.8
+  bagging_freq: 1
+  lambda_l1: 0.5
+  lambda_l2: 5.0
+  n_estimators: 1200
+  early_stopping_rounds: 100
+
+validation:
+  scheme: StratifiedGroupKFold
+  n_splits: 5
+  group_by: original_sample_id
+  threshold: 0.5
+
+output:
+  submission_file: exp003_index_reduction_submission.csv
+  model_file: exp003_index_reduction.joblib
+  multiseed_csv: outputs/models/exp003_multiseed_comparison.csv
+
+decision_rule: >
+  Comparer sur seeds 42/1/7 (compare_seeds.py) avant toute conclusion (leçon
+  de H5 : un seul run peut tromper). Garder features_v3 (fusion dans
+  features.py) seulement si delta moyen >= 0, ou si |delta moyen| < delta std
+  (perte non distinguable du bruit). Rejeter si delta négatif et cohérent sur
+  les 3 seeds, comme observé pour H5.
