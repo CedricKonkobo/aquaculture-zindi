@@ -13,13 +13,27 @@ sur indices spectraux et bandes brutes).
 
 | Métrique | Valeur (OOF) |
 |---|---|
-| AUC | _à remplir après exécution_ |
-| F1 (seuil 0.5) | _à remplir après exécution_ |
-| Score pondéré (0.6·F1 + 0.4·AUC) | _à remplir après exécution_ |
+| AUC |0.9940 |
+| F1 (seuil 0.5) | 0.9618 |
+| Score pondéré (0.6·F1 + 0.4·AUC) | 0.9747 |
 | Score leaderboard Zindi | ~100e place (baseline d'origine) |
 
 ## Top features (importance LightGBM)
-_à remplir après exécution — copier la sortie de `feature_importance()`_
+VV_min       208
+NDWI_max     185
+green_min    137
+VV_p75       123
+VV_mean      117
+NDRE_min     116
+NDMI_max     115
+VV_max       115
+blue_min     102
+swir2_max     96
+MNDWI_min     94
+NDWI2_max     91
+green_p25     82
+BSI_max       82
+red_min       79
 
 ## Observations
 -

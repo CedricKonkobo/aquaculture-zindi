@@ -1,0 +1,51 @@
+# Configuration de exp002_feature_reduction
+# Test de l'hypothèse H5 (EDA étape 7) : réduction de la redondance entre
+# bandes/indices très corrélés (|r| > 0.95).
+
+experiment:
+  name: exp002_feature_reduction
+  hypothesis: >
+    H5 — re2/re3/nira (r>0.99 avec nir), swir2 (r=0.977 avec swir1),
+    green (r=0.964 avec blue) et VH_VV_ratio (r=1.000 avec RVI, doublon strict)
+    sont redondants. En garder un seul par groupe doit alléger le modèle sans
+    perte de score (signal déjà porté par le représentant conservé).
+  baseline_reference: exp001_baseline
+  seed: 42
+
+changes_vs_baseline:
+  - "src.features -> src.features_v2 (DROP_SERIES exclut re2, re3, nira, swir2, green, VH_VV_ratio)"
+  - "aucun autre changement (mêmes hyperparamètres, même augmentation, même CV)"
+
+augmentation:
+  n_replicas: 10
+  window_min_months: 4
+  window_max_months: 6
+  s2_gap_distribution: [0.735, 0.224, 0.036, 0.005]
+
+model:
+  type: LightGBM
+  objective: binary
+  learning_rate: 0.03
+  num_leaves: 31
+  min_child_samples: 40
+  feature_fraction: 0.6
+  bagging_fraction: 0.8
+  bagging_freq: 1
+  lambda_l1: 0.5
+  lambda_l2: 5.0
+  n_estimators: 1200
+  early_stopping_rounds: 100
+
+validation:
+  scheme: StratifiedGroupKFold
+  n_splits: 5
+  group_by: original_sample_id
+  threshold: 0.5
+
+output:
+  submission_file: exp002_feature_reduction_submission.csv
+  model_file: exp002_feature_reduction.joblib
+
+decision_rule: >
+  Garder features_v2 (le fusionner dans features.py) si score OOF pondéré >=
+  score de exp001_baseline. Sinon rejeter et documenter pourquoi dans results.md.
