@@ -27,8 +27,26 @@ def weighted_score(f1, auc):
     return 0.6 * f1 + 0.4 * auc
 
 
+def default_fit_fn(model, X_tr, y_tr, X_val, y_val, early_stopping_rounds=100):
+    """
+    Fit générique historique (LightGBM) : eval_set + eval_metric="auc", avec
+    early stopping si le modèle est un LightGBM. Sert de comportement par
+    défaut de cross_validate -- inchangé pour exp001-004.
+
+    D'autres familles de modèles (CatBoost, XGBoost, RandomForest sans
+    eval_set...) ont une API de fit différente : voir le paramètre fit_fn de
+    cross_validate, utilisé par exp005_model_comparison pour les brancher
+    sans dupliquer la boucle de CV.
+    """
+    fit_kwargs = dict(eval_set=[(X_val, y_val)], eval_metric="auc")
+    if "lightgbm" in type(model).__module__:
+        import lightgbm as lgb
+        fit_kwargs["callbacks"] = [lgb.early_stopping(early_stopping_rounds, verbose=False)]
+    model.fit(X_tr, y_tr, **fit_kwargs)
+
+
 def cross_validate(model_factory, X, Y, groups, n_splits=5, threshold=0.5, seed=SEED,
-                    verbose=True, early_stopping_rounds=100):
+                    verbose=True, early_stopping_rounds=100, fit_fn=None):
     """
     Effectue une StratifiedGroupKFold CV.
 
@@ -41,12 +59,17 @@ def cross_validate(model_factory, X, Y, groups, n_splits=5, threshold=0.5, seed=
     Y : array de labels binaires
     groups : array d'IDs d'origine (pour éviter la fuite entre répliques augmentées)
     threshold : seuil de décision pour le F1 (0.5 par défaut, voir Étape 6 pour l'optimisation)
+    fit_fn : callable(model, X_tr, y_tr, X_val, y_val, early_stopping_rounds), optionnel
+        Permet de personnaliser l'appel .fit() pour des modèles dont l'API diffère
+        de LightGBM (CatBoost, XGBoost, RandomForest...). Par défaut : default_fit_fn
+        (comportement historique, inchangé pour les expériences existantes).
 
     Retourne
     --------
     dict avec oof (probas out-of-fold), models (liste des modèles entraînés par fold),
     et les métriques par fold + globales.
     """
+    fit_fn = fit_fn or default_fit_fn
     oof = np.zeros(len(X))
     models = []
     fold_metrics = []
@@ -54,11 +77,7 @@ def cross_validate(model_factory, X, Y, groups, n_splits=5, threshold=0.5, seed=
     skf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     for fold, (tri, vai) in enumerate(skf.split(X, Y, groups=groups)):
         model = model_factory()
-        fit_kwargs = dict(eval_set=[(X.iloc[vai], Y[vai])], eval_metric="auc")
-        if hasattr(model, "fit") and "lightgbm" in type(model).__module__:
-            import lightgbm as lgb
-            fit_kwargs["callbacks"] = [lgb.early_stopping(early_stopping_rounds, verbose=False)]
-        model.fit(X.iloc[tri], Y[tri], **fit_kwargs)
+        fit_fn(model, X.iloc[tri], Y[tri], X.iloc[vai], Y[vai], early_stopping_rounds)
         proba = model.predict_proba(X.iloc[vai])[:, 1]
         oof[vai] = proba
         models.append(model)
@@ -100,3 +119,65 @@ def feature_importance(model, feature_names, top_n=20):
     """Retourne les top_n features les plus importantes pour un modèle déjà entraîné."""
     imp = pd.Series(model.feature_importances_, index=feature_names)
     return imp.sort_values(ascending=False).head(top_n)
+
+
+def cross_validate_blend(model_specs, X, Y, groups, n_splits=5, threshold=0.5, seed=SEED,
+                          verbose=True, early_stopping_rounds=100, weights=None):
+    """
+    Entraîne plusieurs modèles sur EXACTEMENT les mêmes folds (même split
+    StratifiedGroupKFold) et moyenne leurs probabilités OOF -> blend simple
+    ou pondéré. Sert à comparer un ensemble à ses modèles individuels sur une
+    base équitable (contrairement à moyenner des OOF venant de CV séparées,
+    dont les folds ne coïncideraient pas forcément de la même façon).
+
+    Paramètres
+    ----------
+    model_specs : liste de (nom, model_factory, fit_fn)
+        Un triplet par modèle à inclure dans le blend (voir experiments/
+        exp005_model_comparison/run.py pour des factories/fit_fn existants).
+    weights : dict {nom: poids}, optionnel (défaut : poids égaux -> moyenne simple)
+
+    Retourne
+    --------
+    dict avec oof_per_model (probas OOF par modèle), oof_blend (moyenne
+    pondérée), models_per_model (modèles entraînés par fold, pour l'inférence
+    test), et metrics (AUC/F1/score par modèle + pour le blend).
+    """
+    weights = weights or {name: 1.0 for name, _, _ in model_specs}
+    n = len(X)
+    oof_per_model = {name: np.zeros(n) for name, _, _ in model_specs}
+    models_per_model = {name: [] for name, _, _ in model_specs}
+
+    skf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    for fold, (tri, vai) in enumerate(skf.split(X, Y, groups=groups)):
+        for name, factory, fit_fn in model_specs:
+            model = factory()
+            fit_fn(model, X.iloc[tri], Y[tri], X.iloc[vai], Y[vai], early_stopping_rounds)
+            proba = model.predict_proba(X.iloc[vai])[:, 1]
+            oof_per_model[name][vai] = proba
+            models_per_model[name].append(model)
+        if verbose:
+            print(f"fold {fold} entraîné pour tous les modèles du blend")
+
+    total_w = sum(weights.values())
+    oof_blend = sum(weights[name] * oof_per_model[name] for name in oof_per_model) / total_w
+
+    metrics = {}
+    for name, proba in oof_per_model.items():
+        auc = roc_auc_score(Y, proba)
+        f1 = f1_score(Y, (proba > threshold).astype(int))
+        metrics[name] = {"auc": auc, "f1": f1, "score": weighted_score(f1, auc)}
+    auc_b = roc_auc_score(Y, oof_blend)
+    f1_b = f1_score(Y, (oof_blend > threshold).astype(int))
+    metrics["blend"] = {"auc": auc_b, "f1": f1_b, "score": weighted_score(f1_b, auc_b)}
+
+    if verbose:
+        for name, m in metrics.items():
+            print(f"{name:12s}  AUC={m['auc']:.4f}  F1={m['f1']:.4f}  score={m['score']:.4f}")
+
+    return {
+        "oof_per_model": oof_per_model,
+        "oof_blend": oof_blend,
+        "models_per_model": models_per_model,
+        "metrics": metrics,
+    }

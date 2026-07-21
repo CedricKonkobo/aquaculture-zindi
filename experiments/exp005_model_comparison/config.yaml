@@ -1,0 +1,48 @@
+# Configuration de exp005_model_comparison
+# Étape 5 du plan : comparer plusieurs familles de modèles sur la même CV,
+# avant de passer à l'optimisation d'hyperparamètres (Optuna, étape 6).
+
+experiment:
+  name: exp005_model_comparison
+  objective: >
+    Comparer LightGBM, CatBoost, XGBoost, RandomForest, ExtraTrees sur
+    exactement la même CV (features.py référence -- 245 features, H3/H5
+    rejetées --, augmentation identique, StratifiedGroupKFold, seuil 0.5,
+    scale_pos_weight=1.6 retenu à l'issue de H2).
+  seed: 42
+  features: src.features (245 features)
+  scale_pos_weight: 1.6   # décision H2 (exp004), reprise pour tous les modèles compatibles
+
+models_compared:
+  - lightgbm      # référence -- utilisé pour toutes les expériences précédentes
+  - catboost      # NaN natif
+  - xgboost       # NaN natif
+  - randomforest  # sklearn -- imputation médiane (Pipeline), pas d'early stopping
+  - extratrees    # idem randomforest
+
+fit_api_note: >
+  Chaque famille a une API .fit() différente (eval_set, early stopping,
+  gestion NaN). src.train.cross_validate a été généralisé (paramètre fit_fn,
+  rétrocompatible) pour les brancher sans dupliquer la boucle de CV -- un
+  seul endroit connaît le détail du split GroupKFold.
+
+augmentation:
+  n_replicas: 10
+  window_min_months: 4
+  window_max_months: 6
+
+validation:
+  scheme: StratifiedGroupKFold
+  n_splits: 5
+  group_by: original_sample_id
+  threshold: 0.5
+
+output:
+  submission_per_model: "exp005_<model>_submission.csv"
+  comparison_csv: outputs/models/exp005_model_comparison.csv
+
+decision_rule: >
+  Retenir le modèle avec le meilleur score OOF pondéré comme base pour
+  l'optimisation d'hyperparamètres (étape 6). Si deux modèles sont proches
+  (delta < ~0.001, dans la marge de bruit observée sur H3/H5), envisager un
+  ensemble/blend plutôt qu'un choix unique.
