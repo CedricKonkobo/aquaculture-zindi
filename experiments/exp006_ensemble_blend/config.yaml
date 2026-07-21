@@ -1,0 +1,41 @@
+# Configuration de exp006_ensemble_blend
+# Suite de exp005 : les 3 boostings (XGBoost, LightGBM, CatBoost) étaient
+# très proches en score OOF -> tester un blend plutôt qu'un choix unique.
+
+experiment:
+  name: exp006_ensemble_blend
+  hypothesis: >
+    Les 3 boostings ont des scores OOF proches (0.9741-0.9754, delta dans la
+    marge de bruit observée sur H3/H5) mais probablement des erreurs pas
+    identiques -> un blend (moyenne simple des probas, mêmes folds) devrait
+    dépasser le meilleur modèle individuel.
+  baseline_reference: exp005_model_comparison (xgboost, meilleur seul : 0.9754)
+  seed: 42
+  features: src.features (245 features)
+  scale_pos_weight: 1.6   # repris de exp004/exp005 pour lightgbm/xgboost/catboost
+
+models_in_blend:
+  - lightgbm
+  - xgboost
+  - catboost
+  # randomforest / extratrees exclus : nettement en retrait à exp005 (score < 0.972)
+
+blend_method: moyenne simple (poids égaux), mêmes folds StratifiedGroupKFold pour tous les modèles
+
+validation:
+  scheme: StratifiedGroupKFold
+  n_splits: 5
+  group_by: original_sample_id
+  threshold: 0.5
+
+output:
+  submission_file: exp006_ensemble_blend_submission.csv
+  comparison_csv: outputs/models/exp006_blend_comparison.csv
+
+decision_rule: >
+  Garder le blend pour la submission finale si son score OOF dépasse le
+  meilleur modèle individuel (même de peu -- un blend est structurellement
+  plus robuste, moins sujet à l'overfitting d'un seul modèle). Si le blend
+  est moins bon que le meilleur seul, vérifier si un modèle plombe le blend
+  (ex. catboost, le plus faible des 3) avant de conclure -- tester un blend
+  à 2 modèles (lightgbm + xgboost) en variante si besoin.
