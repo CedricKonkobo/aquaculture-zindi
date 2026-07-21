@@ -1,0 +1,55 @@
+# Configuration de exp004_class_weight
+# Test de l'hypothèse H2 (EDA étape 3) : compenser le décalage de prior
+# train (40.4% positifs) / test (probablement plus élevé, non chiffré).
+
+experiment:
+  name: exp004_class_weight
+  hypothesis: >
+    H2 — le prior test est probablement différent du prior train. Le seuil de
+    décision (0.5) est imposé par le règlement -> le seul levier légitime est
+    de compenser via scale_pos_weight à l'entraînement, pas de déplacer le
+    seuil. Contrairement à H3/H5, non validable par le score OOF seul (la CV
+    reste jugée au prior train) -> l'indicateur pertinent est le taux de
+    positifs prédit sur Test.csv.
+  baseline_reference: exp001_baseline (scale_pos_weight = 1.0, implicite)
+  seed: 42
+  features: src.features (245 features, référence -- H3/H5 rejetées)
+
+grid:
+  scale_pos_weight: [1.0, 1.3, 1.6, 2.0, 2.5]
+
+augmentation:
+  n_replicas: 10
+  window_min_months: 4
+  window_max_months: 6
+
+model:
+  type: LightGBM
+  objective: binary
+  learning_rate: 0.03
+  num_leaves: 31
+  min_child_samples: 40
+  feature_fraction: 0.6
+  bagging_fraction: 0.8
+  bagging_freq: 1
+  lambda_l1: 0.5
+  lambda_l2: 5.0
+  n_estimators: 1200
+  early_stopping_rounds: 100
+
+validation:
+  scheme: StratifiedGroupKFold
+  n_splits: 5
+  group_by: original_sample_id
+  threshold: 0.5   # imposé par le règlement, jamais optimisé
+
+output:
+  submission_per_weight: "exp004_class_weight_w<W>_submission.csv"
+  sweep_csv: outputs/models/exp004_weight_sweep.csv
+
+decision_rule: >
+  PAS de règle automatique (contrairement à H3/H5). Le score OOF baisse
+  mécaniquement avec le poids -- ne pas choisir sur cette base. Choisir un
+  poids qui rapproche le taux de positifs prédit test d'une estimation
+  raisonnable du vrai prior test, en acceptant une légère baisse de F1(OOF)
+  en échange. Documenter le raisonnement dans results.md, pas juste un chiffre.
