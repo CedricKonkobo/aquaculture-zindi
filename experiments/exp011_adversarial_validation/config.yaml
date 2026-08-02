@@ -1,0 +1,66 @@
+# Configuration de exp011_adversarial_validation
+# Diagnostic (pas de soumission). Mesure le décalage de distribution
+# train/test qui explique le gap OOF 0.975 vs leaderboard 0.82.
+#
+# Contexte : exp010 a confirmé que la STRUCTURE des données manquantes est
+# fidèlement reproduite par l'augmentation (écart max 0.0003 sur S2_GAP_P).
+# Le décalage restant porte donc sur les VALEURS -- ce qui est cohérent avec
+# l'énoncé du challenge ("trained on data from one time period and tested on
+# data from a different one").
+
+experiment:
+  name: exp011_adversarial_validation
+  objective: >
+    1) Mesurer l'ampleur du décalage de covariables train/test via un
+       classifieur adversarial (cible = 0 si train, 1 si test). Une AUC
+       proche de 0.5 = distributions indiscernables ; proche de 1.0 =
+       décalage sévère.
+    2) Identifier QUELLES features décalent le plus (importances du
+       classifieur adversarial), pour les retirer ou les remplacer par des
+       équivalents invariants au temps à exp013.
+    3) Produire des poids de similarité au test (propensity weights) pour
+       chaque échantillon train, réutilisables à exp014 pour reconstruire
+       une CV qui corrèle avec le leaderboard.
+  seed: 42
+
+method: >
+  Le train est augmenté (mask_window) AVANT featurisation, pour que les deux
+  côtés aient la même structure de mois manquants -- sinon le classifieur
+  adversarial détecterait trivialement "12 mois vs 4-6 mois" au lieu du vrai
+  décalage de valeurs. C'est le point méthodologique clé de cette expérience.
+
+  Deux runs séparés, pour distinguer les deux sources de décalage :
+    run_all_features   : toutes les features de src.features (245)
+    run_normalized_only: uniquement les features d'indices normalisés
+                         (NDVI/NDWI/MNDWI/... + ratios S1), en excluant les
+                         stats de bandes brutes (niveaux absolus)
+  Si l'AUC chute nettement entre les deux, cela confirme que le décalage est
+  porté par les NIVEAUX ABSOLUS des bandes, et que les indices normalisés
+  sont bien la voie robuste (-> exp013).
+
+n_aug_train: 3     # suffisant pour le diagnostic, garde le run rapide
+n_splits: 5
+model: LightGBM (paramètres légers, non tunés -- on mesure la séparabilité,
+       pas la performance)
+
+output:
+  report_csv: outputs/models/exp011_adversarial_report.csv
+  importance_csv: outputs/models/exp011_adversarial_importance.csv
+  weights_csv: outputs/models/exp011_propensity_weights.csv
+  figure: outputs/figures/exp011_adversarial_top_features.png
+
+interpretation_guide: >
+  AUC ~0.5-0.6  : décalage faible -- le gap LB s'explique surtout par le
+                  seuil 0.5 mal placé (-> priorité à exp012 scale_pos_weight).
+  AUC ~0.6-0.8  : décalage modéré -- combiner exp012 et exp013.
+  AUC >0.8      : décalage sévère -- exp013 (features invariantes) devient
+                  la priorité absolue, et exp014 (CV repondérée) est
+                  indispensable pour retrouver une validation fiable.
+
+decision_rule: >
+  Les features dont l'importance adversariale est élevée sont candidates au
+  retrait à exp013, MAIS seulement si elles ne sont pas simultanément très
+  prédictives pour la vraie tâche (une feature peut être à la fois décalée
+  et indispensable -- dans ce cas la normaliser plutôt que la supprimer).
+  Le croisement importance_adversariale x importance_tache est fourni dans
+  le rapport pour arbitrer.
