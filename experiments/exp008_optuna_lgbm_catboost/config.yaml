@@ -1,0 +1,80 @@
+# Configuration de exp008_optuna_lgbm_catboost
+# Étape 6 (2/2) : compléter l'optimisation d'hyperparamètres commencée à
+# exp007 (XGBoost) sur les deux autres boostings du blend (LightGBM,
+# CatBoost), puis reconstruire le blend d'exp006 avec les 3 modèles tunés
+# et des poids optimisés (au lieu de la moyenne simple).
+
+experiment:
+  name: exp008_optuna_lgbm_catboost
+  objective: >
+    1) Tuner LightGBM et CatBoost via Optuna (même protocole 2 phases que
+       exp007). 2) Reconstruire un blend à 3 modèles tunés (XGBoost tuné
+       d'exp007 + LightGBM tuné + CatBoost tuné) sur les mêmes folds.
+       3) Optimiser les poids du blend sur les OOF (grid search sur le
+       simplexe) plutôt que la moyenne simple d'exp006.
+  baseline_reference:
+    exp005_lightgbm_manuel: 0.9750
+    exp005_catboost_manuel: 0.9741
+    exp006_blend_equipoids: 0.9756   # à battre
+  seed: 42
+  features: src.features (245 features, référence -- H3/H5 rejetées)
+  scale_pos_weight: 1.6   # fixé, décision H2 -- non retuné, comme exp007
+
+search_space_lightgbm:
+  n_estimators: [400, 2000, step=100]
+  learning_rate: [0.01, 0.1, log-scale]
+  num_leaves: [15, 127]
+  min_child_samples: [10, 100]
+  feature_fraction: [0.4, 1.0]
+  bagging_fraction: [0.5, 1.0]
+  lambda_l1: [1e-3, 10.0, log-scale]
+  lambda_l2: [1e-3, 20.0, log-scale]
+
+search_space_catboost:
+  iterations: [400, 2000, step=100]
+  learning_rate: [0.01, 0.1, log-scale]
+  depth: [4, 10]
+  l2_leaf_reg: [1.0, 20.0, log-scale]
+  bagging_temperature: [0.0, 5.0]
+  random_strength: [1e-3, 10.0, log-scale]
+
+protocol:
+  phase_1_search:
+    purpose: exploration rapide et peu coûteuse de l'espace des hyperparamètres
+    n_aug: 5      # proxy, comme exp007
+    n_splits: 3
+    n_trials: 40  # ajustable en argument CLI (1er arg = lgbm, 2e = catboost)
+    sampler: TPESampler (Optuna), seed=42
+  phase_2_confirmation:
+    purpose: >
+      réévaluer les meilleurs hyperparamètres trouvés en phase 1 avec la
+      config complète (n_aug=10, 5 folds), comparaison directe avec
+      exp005 (lightgbm 0.9750, catboost 0.9741).
+    n_aug: 10
+    n_splits: 5
+  phase_3_blend:
+    purpose: >
+      blend des 3 modèles tunés (xgboost tuné exp007 + lightgbm tuné +
+      catboost tuné) sur EXACTEMENT les mêmes folds (cross_validate_blend),
+      puis recherche des poids optimaux par grid search sur le simplexe
+      (pas [0.05, 1.0], comparé à la moyenne simple).
+    weight_grid_step: 0.05
+
+output:
+  submission_file: exp008_optuna_lgbm_catboost_submission.csv
+  lgbm_trials_csv: outputs/models/exp008_optuna_lgbm_trials.csv
+  catboost_trials_csv: outputs/models/exp008_optuna_catboost_trials.csv
+  best_params_csv: outputs/models/exp008_optuna_best_params.csv
+  blend_comparison_csv: outputs/models/exp008_blend_comparison.csv
+  best_weights_csv: outputs/models/exp008_best_weights.csv
+
+decision_rule: >
+  a) Pour chaque modèle tuné isolément : gain > ~0.001-0.002 vs sa version
+     manuelle (exp005) pour être adopté (même seuil que exp007).
+  b) Pour le blend : comparer le meilleur blend (poids optimisés) à
+     0.9756 (exp006, équipoids). Un gain net > bruit de CV (~0.0002-0.0003,
+     cf. H3/H5) valide les poids optimisés comme référence finale.
+  c) Si le blend à poids optimisés ne bat pas 0.9756 de façon significative,
+     garder le blend équipoids d'exp006 (plus simple, moins de risque
+     d'overfit aux OOF) mais avec les 3 modèles tunés à la place des
+     modèles manuels si leurs scores individuels (a) sont meilleurs.

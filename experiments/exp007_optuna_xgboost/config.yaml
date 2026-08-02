@@ -1,0 +1,52 @@
+# Configuration de exp007_optuna_xgboost
+# Étape 6 (1/2) : optimisation d'hyperparamètres XGBoost via Optuna.
+
+experiment:
+  name: exp007_optuna_xgboost
+  objective: >
+    Optimiser les hyperparamètres XGBoost (TPE sampler, Optuna) et comparer
+    au meilleur XGBoost manuel de exp005 (score OOF 0.9754, config complète).
+  baseline_reference: exp005_model_comparison (xgboost manuel, score 0.9754)
+  seed: 42
+  features: src.features (245 features, référence -- H3/H5 rejetées)
+  scale_pos_weight: 1.6   # fixé, décision H2 -- non retuné pour ne pas mélanger les hypothèses
+
+search_space:
+  n_estimators: [400, 2000, step=100]
+  learning_rate: [0.01, 0.1, log-scale]
+  max_depth: [3, 9]
+  subsample: [0.5, 1.0]
+  colsample_bytree: [0.4, 1.0]
+  min_child_weight: [1, 20]
+  reg_alpha: [1e-3, 10.0, log-scale]
+  reg_lambda: [1e-3, 20.0, log-scale]
+  gamma: [1e-3, 5.0, log-scale]
+
+protocol:
+  phase_1_search:
+    purpose: exploration rapide et peu coûteuse de l'espace des hyperparamètres
+    n_aug: 5      # au lieu de 10 -- proxy, pas la config finale
+    n_splits: 3   # au lieu de 5
+    n_trials: 40  # ajustable en argument CLI
+    sampler: TPESampler (Optuna), seed=42
+  phase_2_confirmation:
+    purpose: >
+      réévaluer les meilleurs hyperparamètres trouvés en phase 1 avec la
+      config complète (n_aug=10, 5 folds), pour comparaison équitable avec
+      exp005/exp006 -- le score du proxy phase 1 n'est PAS comparable
+      directement à 0.9754 (CV différente, moins de données).
+    n_aug: 10
+    n_splits: 5
+
+output:
+  submission_file: exp007_optuna_xgboost_submission.csv
+  trials_csv: outputs/models/exp007_optuna_trials.csv
+  best_params_csv: outputs/models/exp007_optuna_best_params.csv
+
+decision_rule: >
+  Comparer le score de la phase 2 (config complète) à 0.9754 (exp005). Un
+  gain > ~0.001-0.002 est nécessaire pour être considéré comme significatif
+  (au-delà du bruit de CV observé sur H3/H5/exp006, std ~0.0002-0.0003).
+  Si gain net : ce XGBoost optimisé devient le candidat de référence pour
+  la suite (à comparer ensuite avec un blend "3 modèles optimisés",
+  exp008/009 sur LightGBM/CatBoost).
