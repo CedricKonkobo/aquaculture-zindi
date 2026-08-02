@@ -1,0 +1,62 @@
+# Configuration de exp009_hybrid_blend
+# Suite d'exp008 : le tuning Optuna n'a apporté un gain net QUE sur CatBoost
+# (+0.0008), pas sur LightGBM (-0.0009) ni XGBoost (-0.0008). Cette
+# expérience teste le blend "meilleur des deux mondes" : LightGBM manuel +
+# XGBoost manuel + CatBoost TUNÉ (au lieu des 3 modèles manuels d'exp006 ou
+# des 3 modèles tunés d'exp008), avec poids optimisés.
+
+experiment:
+  name: exp009_hybrid_blend
+  objective: >
+    Tester si remplacer uniquement CatBoost (manuel -> tuné, exp008) dans le
+    blend d'exp006, en gardant LightGBM et XGBoost manuels (exp005), bat le
+    blend de référence 0.9756. Les 4 modèles (lgbm_manuel, xgb_manuel,
+    cat_manuel, cat_tuné) sont entraînés sur EXACTEMENT les mêmes folds en
+    un seul passage de CV, pour permettre de comparer plusieurs blends
+    (all-manuel vs hybride) sans ré-entraîner.
+  baseline_reference:
+    exp006_blend_all_manual: 0.9756   # référence à battre
+    exp008_blend_all_tuned_weighted: 0.9755
+  seed: 42 (run.py) puis [42, 1, 7] (compare_seeds.py)
+  features: src.features (245 features, référence)
+  scale_pos_weight: 1.6
+
+models_in_cv:
+  - lightgbm_manual (exp005, hyperparamètres manuels)
+  - xgboost_manual (exp005, hyperparamètres manuels)
+  - catboost_manual (exp005, hyperparamètres manuels -- pour reproduire exp006 exactement)
+  - catboost_tuned (exp008, hyperparamètres Optuna -- gain net +0.0008 vs manuel)
+
+blends_compares:
+  all_manual: moyenne(lgbm_manual, xgb_manual, cat_manual)          # = exp006, même seed
+  hybrid_equal: moyenne(lgbm_manual, xgb_manual, cat_tuned)         # poids égaux
+  hybrid_weighted: grid search poids (lgbm_manual, xgb_manual, cat_tuned)  # pas 0.05
+
+protocol:
+  run.py:
+    n_aug: 10
+    n_splits: 5
+    seed: 42
+    purpose: résultat détaillé + soumission candidate
+  compare_seeds.py:
+    seeds: [42, 1, 7]
+    purpose: >
+      confirmer que le gain hybrid_weighted vs all_manual (référence exp006,
+      recalculée par seed pour une comparaison honnête) est un signal réel
+      et pas du bruit de CV, même règle de décision que H3/H5/exp002/exp003
+      (|delta moyen| < delta std -> bruit).
+
+output:
+  submission_file: exp009_hybrid_blend_submission.csv
+  blend_comparison_csv: outputs/models/exp009_blend_comparison.csv
+  best_weights_csv: outputs/models/exp009_best_weights.csv
+  multiseed_csv: outputs/models/exp009_multiseed_comparison.csv
+
+decision_rule: >
+  Comparer hybrid_weighted à all_manual (référence exp006, même seed).
+  Sur seed 42 seul : gain > ~0.001-0.002 souhaitable mais pas suffisant à
+  lui seul (cf. leçon H5/H3 -- toujours confirmer sur 2-3 seeds). Décision
+  finale sur la base de compare_seeds.py : |delta moyen| < delta std -> bruit,
+  garder exp006 (plus simple). Sinon, si delta moyen > 0 et cohérent sur les
+  3 seeds -> adopter exp009 (hybrid_weighted) comme nouvelle référence pour
+  la soumission finale.
