@@ -1,0 +1,46 @@
+# Configuration de exp010_gap_diagnostic
+# Pas un modèle -- diagnostic pur. Vérifie que les hypothèses codées en dur
+# dans src/utils.py (S2_GAP_P, fenêtre 4-6 mois, utilisées par
+# src/augmentation.py pour simuler les conditions du test sur le train)
+# correspondent bien à ce qu'on observe RÉELLEMENT dans data/Test.csv.
+#
+# C'est le levier anti-décalage train/test le plus important du pipeline :
+# toute l'augmentation (et donc tout ce qui a été fait depuis exp001) repose
+# sur cette hypothèse. Jamais vérifiée empiriquement jusqu'ici.
+
+experiment:
+  name: exp010_gap_diagnostic
+  objective: >
+    Comparer, sur le vrai Test.csv, la distribution empirique de :
+      1) la longueur de la fenêtre consécutive de disponibilité S1 (VH/VV)
+      2) le nombre de mois avec trou S2 (nuages) À L'INTÉRIEUR de cette fenêtre
+      3) le caractère bien consécutif (ou non) de la fenêtre observée
+    ...aux hypothèses codées dans src/utils.py :
+      MIN_LEN=4, MAX_LEN=6 (uniforme), S2_GAP_P=[0.735, 0.224, 0.036, 0.005]
+  hypothesis: >
+    H_gap : la distribution empirique du test correspond (à peu près) à
+    S2_GAP_P et à la fenêtre 4-6 mois. Si un écart net apparaît, les
+    répliques augmentées du train ne recréent PAS fidèlement les conditions
+    du test -> tout le pipeline depuis exp001 aurait un léger biais.
+
+method: >
+  Une ligne de test = "dans la fenêtre" pour un mois donné si VH ET VV ne
+  sont pas NaN à ce mois (le radar S1 est supposé toujours présent dans la
+  fenêtre, cf. docstring de augmentation.py). Un mois "dans la fenêtre" est
+  un "trou S2" si TOUTES les bandes optiques (S2_BANDS) y sont NaN.
+
+output:
+  report_csv: outputs/models/exp010_gap_diagnostic_report.csv
+  figures:
+    - outputs/figures/exp010_window_length_hist.png
+    - outputs/figures/exp010_n_gaps_hist.png
+
+decision_rule: >
+  Si les distributions empiriques (longueur de fenêtre, nombre de trous)
+  s'écartent notablement des hypothèses (ex: mode réel hors [4,6], ou
+  proportions de n_gaps très différentes de S2_GAP_P), mettre à jour
+  MIN_LEN/MAX_LEN dans augmentation.mask_window et S2_GAP_P dans
+  src/utils.py avec les valeurs empiriques, puis RE-LANCER exp006 (blend
+  de référence) avec le gap_p corrigé pour vérifier l'impact réel sur le
+  score OOF -- un gap_p mal calé peut coûter plus cher que n'importe quel
+  gain de tuning obtenu jusqu'ici (exp007/exp008/exp009 cumulés : ~+0.001).
