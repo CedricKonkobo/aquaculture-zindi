@@ -1,0 +1,80 @@
+# Configuration de exp016_pseudo_labeling
+# Auto-apprentissage transductif : faire apprendre le modèle SUR la période
+# du test, en utilisant ses propres prédictions les plus confiantes comme
+# étiquettes provisoires.
+
+experiment:
+  name: exp016_pseudo_labeling
+  objective: >
+    Ajouter au jeu d'entraînement les échantillons de TEST dont la prédiction
+    est la plus confiante, étiquetés par le modèle lui-même, puis réentraîner.
+    Le modèle apprend ainsi sur des données de la période du test -- ce
+    qu'aucune expérience précédente n'a permis.
+  seed: 42
+  features: base + invariantes (409) -- meilleure config, exp015 (LB 0.8324)
+  scale_pos_weight: 1.6   # figé, exp013 : levier mort
+
+why_this_is_the_highest_leverage_step: >
+  Toutes les tentatives précédentes cherchaient à rendre un modèle entraîné
+  sur la période A meilleur sur la période B, SANS jamais lui montrer la
+  période B :
+    exp012 (LB 0.778) : transformer les features pour aligner -> échec
+    exp013 (LB 0.805) : recalibrer via scale_pos_weight -> levier mort
+    exp014 (LB 0.825) : supprimer les features décalées -> elles sont
+                        indispensables
+    exp015 (LB 0.8324): ajouter des features complémentaires -> gain réel
+                        mais n'attaque pas la cause
+  Or les 1030 échantillons de test SONT disponibles (features, pas labels).
+  Le pseudo-étiquetage est la seule technique qui fait traverser la frontière
+  entre les deux domaines au lieu de la contourner.
+
+legality: >
+  Seules les FEATURES du test sont utilisées, plus les prédictions du modèle
+  lui-même. Les vraies étiquettes du test ne sont jamais employées (elles ne
+  sont pas disponibles). Le seuil de décision reste strictement 0.5 dans
+  make_submission(). Aucune donnée externe. Conforme au règlement.
+
+principle: >
+  L'AUC du modèle sur le test est estimée à ~0.90 : globalement imparfaite,
+  mais ses prédictions EXTRÊMES (p > seuil ou p < 1 - seuil) sont très
+  majoritairement correctes. Ce sont celles-là, et seulement celles-là, qui
+  deviennent des étiquettes provisoires.
+
+confidence_grid: [0.90, 0.95, 0.99]
+rounds: [1, 2]      # 2 tours uniquement pour le meilleur seuil du tour 1
+pseudo_weight: 0.5  # les pseudo-étiquettes pèsent moins que les vraies
+
+n_aug: 10
+n_splits: 5
+holdout_fraction: 0.25
+
+main_risk: >
+  Amplification d'erreurs : si le modèle se trompe avec confiance, il renforce
+  ses propres erreurs et le score se dégrade sans que rien ne l'annonce
+  localement. Parades appliquées :
+    - seuil de confiance élevé (>= 0.90, testé jusqu'à 0.99)
+    - poids réduit sur les pseudo-étiquettes (0.5)
+    - maximum 2 tours
+    - suivi du nombre et de l'équilibre des pseudo-étiquettes à chaque tour
+    - évaluation sur le holdout test-like à chaque tour
+
+evaluation_caveat: >
+  LIMITE IMPORTANTE : le holdout est construit à partir du TRAIN. Le bénéfice
+  du pseudo-étiquetage porte, lui, sur le domaine du TEST. Le holdout peut
+  donc SOUS-ESTIMER le gain réel (il ne voit pas l'adaptation au domaine
+  cible) tout en restant utile comme garde-fou : s'il CHUTE nettement, c'est
+  le signe d'une amplification d'erreurs.
+  Conséquence : cette expérience nécessite une validation au leaderboard.
+  Budget prévu : 2 soumissions.
+
+output:
+  report_csv: outputs/models/exp016_pseudo_labeling.csv
+  submissions: exp016_pl_t{seuil}_r{tour}_submission.csv
+
+decision_rule: >
+  a) Holdout stable ou en hausse + LB en hausse -> adopter, et envisager un
+     3e tour ou un seuil plus bas (plus de pseudo-étiquettes).
+  b) Holdout stable mais LB en baisse -> amplification d'erreurs invisible
+     localement ; revenir à exp015 et abandonner la piste.
+  c) Holdout en chute nette -> amplification d'erreurs manifeste ; monter le
+     seuil de confiance ou abandonner.
