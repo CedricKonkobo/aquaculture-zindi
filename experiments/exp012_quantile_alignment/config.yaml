@@ -1,0 +1,66 @@
+# Configuration de exp012_quantile_alignment
+# Réponse au décalage sévère mesuré à exp011 (AUC adversariale = 0.9903).
+#
+# exp011 a montré que retirer les bandes brutes ne suffit pas (0.9776 avec
+# les seuls indices normalisés) : c'est la FORME des distributions qui
+# diffère entre les deux périodes, pas seulement leur échelle. La réponse
+# adaptée n'est donc pas une sélection de features mais un ALIGNEMENT de
+# distributions.
+
+experiment:
+  name: exp012_quantile_alignment
+  objective: >
+    Aligner les distributions train et test par transformation en quantiles
+    (rank-gauss), appliquée SÉPARÉMENT à chaque domaine, puis :
+      1) re-mesurer l'AUC adversariale (critère de succès principal) ;
+      2) mesurer l'impact sur la CV et produire une soumission.
+  seed: 42
+
+method: >
+  Pour chaque feature, train et test sont transformés séparément en leurs
+  rangs respectifs, mappés sur une même gaussienne (src/alignment.py).
+  Détruit tout décalage monotone (niveau, échelle, étirement) en préservant
+  l'ORDRE RELATIF des échantillons, qui porte le signal "bassin vs autre".
+  N'utilise que les features du test, jamais ses labels ; aucun seuil touché.
+
+variants_compared:
+  baseline      : features brutes (référence, = pipeline exp006/exp009)
+  quantile_gauss: align_by_quantiles(output_distribution="normal")
+  rank_pct      : align_by_rank (rang normalisé [0,1], non paramétrique)
+
+primary_metric: >
+  AUC ADVERSARIALE POST-ALIGNEMENT (pas le score OOF).
+  C'est le seul indicateur fiable dont on dispose tant que la CV locale est
+  cassée (OOF 0.975 vs LB 0.82). Cible : < 0.7. Plus elle descend, plus les
+  deux domaines deviennent comparables.
+
+secondary_metric: >
+  Score OOF sur features alignées. ATTENTION : il n'est PAS comparable au
+  0.9756 d'exp006. Une BAISSE de l'OOF après alignement est ATTENDUE et
+  plutôt bon signe : elle indique que la CV cesse d'exploiter des raccourcis
+  spécifiques au train qui ne se transfèrent pas au test. Le juge final reste
+  le leaderboard.
+
+n_aug: 10
+n_splits: 5
+model: LightGBM manuel (exp005) -- modèle unique, non tuné, pour isoler
+       l'effet de l'alignement. Le blend viendra plus tard (exp015).
+
+output:
+  adversarial_csv: outputs/models/exp012_alignment_adversarial.csv
+  cv_csv: outputs/models/exp012_alignment_cv.csv
+  submission_file: exp012_quantile_alignment_submission.csv   # variante retenue
+
+decision_rule: >
+  a) Si l'AUC adversariale chute nettement (< 0.7) : l'alignement fonctionne.
+     Soumettre la meilleure variante et comparer au LB actuel (0.82). C'est
+     LE test décisif : un gain LB net valide toute la direction.
+  b) Si elle chute partiellement (0.7-0.9) : le décalage n'est pas
+     entièrement monotone. Soumettre quand même (gain partiel probable) et
+     envisager à exp014 une normalisation par échantillon (chaque ligne
+     normalisée par ses propres statistiques temporelles) plutôt que par
+     domaine.
+  c) Si elle ne bouge quasiment pas (> 0.9) : le décalage n'est pas monotone
+     du tout. Abandonner cette piste et se rabattre sur des features
+     intrinsèquement invariantes (rangs INTRA-échantillon, formes de séries
+     temporelles normalisées individuellement).
