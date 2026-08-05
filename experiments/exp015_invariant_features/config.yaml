@@ -1,0 +1,87 @@
+# Configuration de exp015_invariant_features
+# Deux angles testés ensemble, tous deux jugés sur le holdout test-like
+# validé à exp014 (écart +0.0297 vs CV standard).
+
+experiment:
+  name: exp015_invariant_features
+  objective: >
+    A) Tester des features INVARIANTES INTRA-ÉCHANTILLON
+       (src/features_invariant.py) : rang des bandes entre elles dans le même
+       pixel, forme temporelle relative, contrastes auto-normalisés.
+    B) Tester une RÉGULARISATION FORTE : une AUC OOF de 0.994 pour ~0.89
+       estimée au test traduit de la mémorisation.
+  seed: 42
+  scale_pos_weight: 1.6   # figé, exp013 : levier mort
+
+why_this_after_exp012_to_exp014: >
+  exp012 (LB 0.778) : aligner les distributions PAR DOMAINE écrase de
+    l'information vraie -> échec.
+  exp013 (LB 0.805) : scale_pos_weight est un levier mort (taux de positifs
+    0.594 -> 0.627 pour un facteur 4 : modèle saturé).
+  exp014 (LB 0.825) : supprimer les features décalées dégrade de façon
+    monotone (0.9472 -> 0.9333) -> elles sont décalées ET indispensables.
+  Reste une seule explication : échec de GÉNÉRALISATION pure (AUC 0.994 en
+  local vs ~0.89 au test ; or l'AUC ne dépend d'aucun seuil).
+
+key_evidence_that_threshold_is_not_the_issue: >
+  Sur le holdout (labels connus) le modèle prédit 45.1 % de positifs pour une
+  vérité ~40 %. Sur le test il prédit 62.3 %. MAIS quand on a réduit ce taux
+  (spw=0.5 -> 59.4 %), le LB a BAISSÉ (0.820 -> 0.805). Si le modèle
+  sur-prédisait réellement, réduire aurait aidé. Donc le test contient
+  vraiment beaucoup de positifs : ni le seuil ni la calibration ne sont en
+  cause.
+
+difference_with_exp012: >
+  exp012 normalisait PAR DOMAINE (forçait les marginales train/test à
+  coïncider -> destruction de signal). Ici on normalise PAR ÉCHANTILLON :
+  le calcul d'un échantillon ne dépend d'AUCUNE population de référence, ni
+  train ni test. Aucune information de population n'est écrasée.
+
+variants:
+  base            : src.features seules (245) -- référence exp014 K=0
+  invariant       : src.features_invariant seules (~164)
+  base_invariant  : union des deux
+  base_regularized: src.features + LightGBM fortement régularisé
+  union_regularized: union + LightGBM fortement régularisé
+
+regularization_profile:
+  n_estimators: 600         # vs 1200
+  learning_rate: 0.03
+  num_leaves: 15            # vs 31
+  min_child_samples: 100    # vs 30
+  feature_fraction: 0.5     # vs 0.7
+  bagging_fraction: 0.7
+  lambda_l1: 5.0            # vs 0.5
+  lambda_l2: 50.0           # vs 5.0
+
+metrics:
+  holdout_score: >
+    MÉTRIQUE DE DÉCISION. Holdout test-like construit exactement comme à
+    exp014 (25 % des groupes les plus test-like, découpage au niveau GROUPE).
+    Référence à battre : 0.9472 (exp014, K=0).
+  cv_score: référence optimiste, ne décide de rien.
+  adv_auc_invariant: >
+    AUC adversariale calculée sur les seules features invariantes. Contrôle
+    de l'hypothèse : si ces features sont vraiment plus transférables, cette
+    AUC doit être NETTEMENT inférieure à 0.9903 (exp011). Si elle reste
+    proche de 0.99, l'hypothèse d'invariance est fausse et il faut le dire.
+
+n_aug: 10
+n_splits: 5
+holdout_fraction: 0.25
+
+output:
+  report_csv: outputs/models/exp015_invariant.csv
+  submissions: exp015_{variante}_submission.csv
+
+decision_rule: >
+  a) Si une variante bat 0.9472 sur le holdout ET que l'AUC adversariale des
+     features invariantes est nettement < 0.99 : hypothèse confirmée,
+     soumettre la meilleure (UNE soumission).
+  b) Si les features invariantes ne battent pas la base mais que l'union
+     l'emporte : elles apportent un complément, pas un remplacement.
+  c) Si la régularisation forte améliore le holdout : la mémorisation était
+     bien un facteur -> pousser plus loin dans cette direction.
+  d) Si rien ne bat 0.9472 : accepter que le plafond soit atteint avec cette
+     approche, figer le meilleur pipeline (exp014 K=0), consacrer le temps
+     restant au bagging multi-seed (robustesse privé) et au rapport Phase 2.
