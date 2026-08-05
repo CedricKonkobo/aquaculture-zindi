@@ -1,0 +1,82 @@
+# Configuration de exp014_shift_feature_selection
+# Suppression des features qui ne se transfèrent pas d'une période à l'autre,
+# guidée par les importances adversariales d'exp011, ET mise en place d'un
+# JUGE LOCAL fiable (holdout "test-like") pour ne plus dépendre du LB.
+
+experiment:
+  name: exp014_shift_feature_selection
+  objective: >
+    1) Retirer les features les plus décalées (top-K du classement
+       adversarial d'exp011) et mesurer l'effet sur la généralisation.
+    2) Construire un holdout "test-like" : les groupes du train que le
+       classifieur adversarial juge les PLUS proches du test servent de
+       validation. C'est une validation volontairement difficile, bien plus
+       représentative des conditions du test que la CV standard.
+  seed: 42
+
+why_this_after_exp012_and_exp013: >
+  exp012 (LB 0.778 vs 0.82) : TRANSFORMER les features pour aligner les
+  distributions écrase de l'information vraie -> échec.
+  exp013 (LB 0.805 vs 0.82) : scale_pos_weight est un levier MORT. Le taux de
+  positifs ne bouge que de 0.594 à 0.627 quand spw varie d'un facteur 4 :
+  le modèle est saturé (probabilités collées à 0 et 1, AUC OOF 0.994), donc
+  quasiment aucun échantillon n'est près de la frontière 0.5.
+  Décomposition du LB 0.82 = 0.6*F1 + 0.4*AUC : les valeurs plausibles sont
+  AUC ~0.90-0.93 et F1 ~0.75. L'AUC elle-même s'effondre (0.994 -> ~0.91).
+  Or l'AUC ne dépend d'AUCUN seuil : c'est donc un vrai échec de
+  GÉNÉRALISATION, pas un problème de calibration. Aucune astuce de seuil ne
+  le corrigera -> il faut retirer les features instables.
+
+difference_with_exp012: >
+  exp012 DÉFORMAIT les features pour forcer les marginales à coïncider (et
+  détruisait de l'information réelle). Ici on ne transforme rien : on
+  SUPPRIME les features instables. Le modèle est contraint d'apprendre sur ce
+  qui reste stable entre les deux périodes.
+
+difference_with_abandoned_reweighting: >
+  Le plan initial d'exp014 (repondération par propension) avait été abandonné
+  car les poids explosaient (max 1062, aucun recouvrement). Ici on ne pondère
+  RIEN : on DÉCOUPE. Les groupes train les plus test-like deviennent un
+  holdout. Pas de poids, donc pas de problème de poids extrêmes.
+
+k_grid: [0, 25, 50, 100, 150]   # nombre de features les plus décalées retirées
+
+holdout:
+  fraction: 0.25       # 25 % des GROUPES les plus test-like
+  granularity: groupe  # jamais au niveau ligne : les répliques d'augmentation
+                       # d'un même échantillon doivent rester du même côté,
+                       # sinon fuite de données
+
+n_aug: 10
+n_splits: 5
+scale_pos_weight: 1.6   # figé -- exp013 a montré que ce levier est mort
+model: LightGBM manuel (exp005), modèle unique pour isoler l'effet du drop
+
+metrics:
+  cv_score: CV standard sur la partie non-holdout (référence, optimiste)
+  holdout_score: >
+    score sur le holdout test-like. C'EST LA MÉTRIQUE DE DÉCISION.
+    Elle devrait être nettement plus basse que la CV standard -- c'est le
+    signe qu'elle capture enfin la difficulté réelle du test.
+
+output:
+  report_csv: outputs/models/exp014_shift_selection.csv
+  dropped_features_csv: outputs/models/exp014_dropped_features.csv
+  submissions: exp014_dropK{K}_submission.csv
+
+decision_rule: >
+  a) Si le holdout_score s'améliore quand K augmente : les features décalées
+     nuisaient bien à la généralisation. Retenir le K optimal et soumettre.
+  b) Si le holdout_score se dégrade dès K=25 : les features décalées sont
+     aussi les plus prédictives (décalées ET indispensables). Ne pas les
+     supprimer ; passer à des features intrinsèquement invariantes
+     (statistiques INTRA-échantillon : rang d'un mois par rapport aux autres
+     mois du MÊME échantillon).
+  c) Valider ensuite au LB avec 1 seule soumission (le meilleur K), pas plus.
+
+validation_of_the_judge: >
+  Point critique : il faut vérifier que le holdout est un MEILLEUR juge que
+  la CV standard. Indice attendu : holdout_score nettement < cv_score. Si les
+  deux sont quasi identiques (~0.975), le holdout n'est pas plus difficile
+  que la CV et ne vaut pas mieux qu'elle -> le noter honnêtement dans
+  results.md et continuer à trancher au LB.
