@@ -1,0 +1,62 @@
+# Configuration de exp013_spw_probe
+# Sondage leaderboard sur scale_pos_weight -- le levier LÉGAL pour corriger
+# le placement de la coupe à 0.5 (le seuil lui-même est interdit de réglage).
+#
+# Constat déclencheur (exp012) : le modèle prédit 48.8 % de positifs sur le
+# test alors que le train en contient ~38 %. Le modèle sur-prédit donc les
+# bassins -> faux positifs -> précision dégradée -> F1 effondré au seuil 0.5.
+# Or F1 pèse 60 % du score. C'est l'explication la plus probable du gap
+# OOF 0.975 vs LB 0.82.
+
+experiment:
+  name: exp013_spw_probe
+  objective: >
+    Balayer scale_pos_weight, mesurer pour chaque valeur le TAUX DE POSITIFS
+    PRÉDITS sur le test, et générer une soumission par valeur. Sélectionner
+    2-3 soumissions à envoyer au leaderboard pour identifier la zone qui
+    maximise le F1 réel.
+  seed: 42
+  features: src.features BRUTES (pas d'alignement -- exp012 a montré au LB
+            que l'alignement dégrade : 0.82 -> 0.778)
+
+spw_grid: [0.5, 0.7, 1.0, 1.3, 1.6, 2.0]
+  # 1.6 = valeur actuelle (exp004), sert de point d'ancrage.
+  # Les valeurs < 1 réduisent les probabilités des positifs -> moins de
+  # prédictions au-dessus de 0.5 -> précision en hausse, rappel en baisse.
+
+n_aug: 10
+n_splits: 5
+model: LightGBM manuel (exp005) -- modèle unique pour isoler l'effet de spw.
+       Le blend viendra ensuite (exp014), une fois la bonne zone identifiée.
+
+why_oof_cannot_decide: >
+  L'OOF est calculé sur la distribution du TRAIN, où la proportion de
+  positifs est celle du train. Il sélectionnera donc le spw optimal POUR LE
+  TRAIN (~1.6, cf. exp004), pas pour le test. C'est précisément l'erreur
+  d'exp004. La seule information exploitable localement est le TAUX DE
+  POSITIFS PRÉDITS sur le test -- pas le score OOF.
+
+submission_strategy: >
+  Ne PAS envoyer les 6 soumissions. Envoyer d'abord 2 valeurs encadrantes
+  (ex: 1.0 et 0.7) pour connaître le SENS de la réponse du LB, puis 1 valeur
+  supplémentaire pour affiner. 3 soumissions maximum sur cette expérience.
+  Chaque envoi doit répondre à une question décidée à l'avance.
+
+output:
+  report_csv: outputs/models/exp013_spw_probe.csv
+  submissions: exp013_spw_{valeur}_submission.csv (une par valeur de la grille)
+
+decision_rule: >
+  a) Si le LB monte quand spw baisse : continuer à descendre jusqu'à
+     inversion. La zone optimale correspondra à un taux de positifs prédits
+     proche de la vraie proportion de bassins du test.
+  b) Si le LB baisse quand spw baisse : le modèle SOUS-prédisait déjà, il
+     faut au contraire monter spw.
+  c) Si le LB ne bouge quasiment pas : le F1 n'est pas le facteur limitant,
+     le problème est ailleurs (capacité de généralisation pure) -> revenir
+     au feature engineering (exp015).
+
+legality: >
+  scale_pos_weight est un hyperparamètre d'ENTRAÎNEMENT, pas un seuil de
+  décision. Le seuil reste strictement 0.5 dans make_submission(). Conforme
+  au règlement ("Setting a probability threshold is strictly forbidden").
