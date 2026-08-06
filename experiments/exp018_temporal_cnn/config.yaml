@@ -1,0 +1,90 @@
+# Configuration de exp018_temporal_cnn
+# Sortie de la famille des arbres : réseau convolutif 1D sur les séries
+# mensuelles brutes, pour exploiter l'ORDRE TEMPOREL perdu par l'agrégation.
+
+experiment:
+  name: exp018_temporal_cnn
+  objective: >
+    1) Entraîner un CNN 1D sur les séquences (12 mois x 12 bandes) brutes.
+    2) Mesurer la CORRÉLATION de ses prédictions avec celles du LightGBM --
+       c'est le vrai critère de succès, plus que son score individuel.
+    3) Blender GBDT + CNN et vérifier sur le holdout figé.
+  seed: 42
+  scale_pos_weight / pos_weight: 1.6   # figé, exp013
+  pseudo_conf: 0.90                    # exp016
+  pseudo_weight: 0.5                   # exp017 : pw>0.5 = artefact de circularité
+
+why_this_after_exp017: >
+  exp017 a établi deux choses :
+    - PLATEAU à ~0.836 (exp016 pw0.5 = 0.8365, exp017 pw2.0 = 0.8362,
+      blend 3 GBDT = neutre).
+    - Le blend LightGBM + XGBoost + CatBoost n'apporte RIEN (+0.0011 holdout,
+      neutre au LB). Trois algorithmes à base d'arbres sur les mêmes features
+      produisent des prédictions trop corrélées.
+  Le motif qui a fonctionné deux fois est l'apport d'information RÉELLEMENT
+  NOUVELLE : features invariantes (+0.0073), accès au domaine cible (+0.0041).
+  Or l'ORDRE TEMPOREL reste inexploité : toutes les features actuelles sont
+  des statistiques agrégées sur les mois (moyenne, min, max, percentiles).
+  La séquence elle-même est perdue.
+
+architecture: >
+  Conv1D(k=3) x2 + BatchNorm + Dropout, puis pooling global (moyenne + max).
+  Le pooling global rend le modèle robuste à la POSITION du motif dans
+  l'année -- essentiel puisque le test provient d'une autre période et que la
+  fenêtre observée n'y est pas la même.
+  Canal de MASQUE explicite (1 = mois observé) : les NaN sont porteurs de
+  sens (nuages) et le réseau doit distinguer "valeur nulle" de "absent".
+  Architecture volontairement PETITE (hidden=64, dropout=0.3) : 1821
+  échantillons d'origine seulement, et les répliques d'augmentation sont
+  corrélées entre elles.
+
+hyperparameter_grid:
+  hidden: [32, 64]
+  dropout: [0.3, 0.5]
+  epochs: 30
+  # grille délibérément minimale : l'objectif est de tester la DÉCORRÉLATION,
+  # pas d'optimiser un CNN à la marge.
+
+variants:
+  cnn_alone      : CNN seul (score individuel de référence)
+  gbdt_alone     : LightGBM + pseudo-étiquetage (= exp016, référence LB 0.8365)
+  blend_gbdt_cnn : moyenne pondérée des deux, plusieurs poids testés
+
+blend_weights_cnn: [0.2, 0.3, 0.4, 0.5]
+
+key_metric: >
+  CORRÉLATION DE PEARSON entre les prédictions OOF du CNN et celles du
+  LightGBM. C'est le critère décisif :
+    - corrélation < 0.90 : le CNN voit réellement autre chose -> le blend a
+      un potentiel réel, même si le CNN seul est moins bon ;
+    - corrélation > 0.95 : le CNN ne fait que réapprendre la même chose ->
+      même conclusion qu'exp017, piste fermée.
+  Point de comparaison : les trois GBDT d'exp017 étaient presque certainement
+  au-dessus de 0.97 (d'où la neutralité du blend), mais cette corrélation
+  n'avait pas été mesurée -- omission corrigée ici.
+
+n_aug: 10
+n_splits: 5
+holdout: rechargé depuis outputs/models/exp017_fixed_holdout_groups.csv
+
+holdout_validity: >
+  Le holdout figé est VALIDE ici : on juge un MODÈLE, pas un paramètre de
+  pseudo-étiquetage. La circularité identifiée à exp017 ne s'applique qu'au
+  réglage de l'intensité du pseudo-étiquetage.
+  Fiabilité établie : exp014->015 (+0.0052 holdout / +0.0073 LB),
+  exp015->016 (+0.0036 / +0.0041).
+
+output:
+  report_csv: outputs/models/exp018_temporal_cnn.csv
+  correlation_csv: outputs/models/exp018_prediction_correlation.csv
+  submissions: exp018_{variante}_submission.csv
+
+decision_rule: >
+  a) Corrélation < 0.90 ET blend > gbdt_alone sur le holdout -> soumettre le
+     meilleur blend (1 soumission). Si le LB confirme, ajouter le bagging
+     multi-seed.
+  b) Corrélation < 0.90 mais blend neutre -> le CNN est décorrélé mais trop
+     faible ; améliorer son architecture avant de conclure.
+  c) Corrélation > 0.95 -> le CNN n'apporte rien de neuf. Conclure que le
+     plafond de ce jeu de données est atteint avec les approches disponibles,
+     figer exp016 et consacrer l'effort au bagging multi-seed et au rapport.
