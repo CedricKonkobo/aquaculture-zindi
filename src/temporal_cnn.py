@@ -80,6 +80,41 @@ class TemporalCNN(nn.Module):
         return self.head(pooled).squeeze(1)
 
 
+class TemporalGRU(nn.Module):
+    """
+    GRU bidirectionnel sur l'axe temporel -- TROISIÈME famille de modèles.
+
+    Ajoutée à exp019 sur la base du résultat d'exp018 : le blend GBDT + CNN a
+    rapporté +0.0226 au leaderboard, non pas parce que le CNN était meilleur
+    (il est plus faible : 0.9724 contre 0.9794 en OOF) mais parce que les deux
+    modèles se DÉGRADENT DIFFÉREMMENT sous le décalage de domaine
+    (corrélation 0.97 sur le train, mais 0.87 sur le test).
+
+    Un GRU traite la séquence de façon récurrente et non convolutive : ses
+    erreurs devraient encore différer de celles du CNN. Le critère de
+    sélection reste la corrélation SUR LE TEST, pas sur l'OOF (leçon d'exp018).
+    """
+
+    def __init__(self, n_channels, hidden=32, dropout=0.3):
+        super().__init__()
+        self.gru = nn.GRU(n_channels, hidden, num_layers=1, batch_first=True,
+                          bidirectional=True)
+        self.dropout = nn.Dropout(dropout)
+        self.head = nn.Sequential(
+            nn.Linear(hidden * 4, 32),   # bidirectionnel x (moyenne + max)
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(32, 1),
+        )
+
+    def forward(self, x):
+        # x : (batch, channels, temps) -> (batch, temps, channels) pour le GRU
+        h, _ = self.gru(x.transpose(1, 2))
+        h = self.dropout(h)
+        pooled = torch.cat([h.mean(dim=1), h.max(dim=1).values], dim=1)
+        return self.head(pooled).squeeze(1)
+
+
 def cube_to_tensor(cube, mean=None, std=None):
     """
     Transforme un cube (n, 12 mois, n_bands) en tenseur (n, 2*n_bands, 12).
@@ -110,19 +145,22 @@ def cube_to_tensor(cube, mean=None, std=None):
 
 def train_cnn(X_tr, y_tr, w_tr=None, n_channels=None, epochs=30, batch_size=256,
                lr=1e-3, weight_decay=1e-4, pos_weight=1.6, dropout=0.3,
-               hidden=64, seed=42, device=None, verbose=False):
+               hidden=64, seed=42, device=None, verbose=False,
+               model_cls=None):
     """
-    Entraîne un TemporalCNN. Retourne le modèle en mode eval.
+    Entraîne un modèle temporel. Retourne le modèle en mode eval.
 
     w_tr : poids par échantillon (pour les pseudo-étiquettes).
     pos_weight : équivalent de scale_pos_weight (figé à 1.6, cf. exp013).
+    model_cls : classe du modèle (TemporalCNN par défaut, ou TemporalGRU).
     """
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     n_channels = n_channels or X_tr.shape[1]
-    model = TemporalCNN(n_channels, hidden=hidden, dropout=dropout).to(device)
+    model_cls = model_cls or TemporalCNN
+    model = model_cls(n_channels, hidden=hidden, dropout=dropout).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     y_t = torch.tensor(np.asarray(y_tr, dtype=np.float32))
@@ -150,7 +188,7 @@ def train_cnn(X_tr, y_tr, w_tr=None, n_channels=None, epochs=30, batch_size=256,
             opt.zero_grad()
             loss.backward()
             opt.step()
-            total += float(loss) * len(idx)
+            total += float(loss.detach()) * len(idx)
         if verbose and (epoch + 1) % 10 == 0:
             print(f"    epoch {epoch+1}/{epochs}  loss={total/n:.4f}")
 

@@ -1,0 +1,84 @@
+# Configuration de exp019_consolidation
+# Cumul des trois gains validés séparément + troisième famille de modèles.
+
+experiment:
+  name: exp019_consolidation
+  objective: >
+    1) Réintroduire le PSEUDO-ÉTIQUETAGE, absent du 0.8591 d'exp018 (il avait
+       été retiré pour isoler l'effet du CNN). Gain attendu additif : +0.0041.
+    2) BAGGING MULTI-SEED des réseaux : un seul seed par fold à exp018, alors
+       que les réseaux sont bien plus sensibles à l'initialisation que les
+       arbres. Gain de score + réduction de variance (classement privé).
+    3) TROISIÈME FAMILLE : GRU bidirectionnel. Si la décorrélation entre
+       familles est le moteur du gain, une famille de plus doit rapporter.
+    4) Poids de blend choisis en s'appuyant sur la CORRÉLATION TEST.
+  seed: 42
+  scale_pos_weight / pos_weight: 1.6
+  pseudo_conf: 0.90
+  pseudo_weight: 0.5
+
+why_this_after_exp018: >
+  exp018 : blend GBDT + CNN -> LB 0.8365 -> 0.8591 (+0.0226), le plus gros
+  gain du projet. Mécanisme identifié : les deux modèles se DÉGRADENT
+  DIFFÉREMMENT sous le décalage de domaine.
+    corrélation OOF  = 0.9701 (domaine train : ils s'accordent)
+    corrélation TEST = 0.8716 (domaine cible : ils divergent)
+  Le blend opère sur le domaine cible, donc c'est la corrélation TEST qui
+  compte. Le critère de décision d'exp018 utilisait l'OOF et concluait à tort
+  à une impasse -- erreur corrigée ici.
+
+  Corollaire : le poids optimal était faible (0.3) alors que le CNN est
+  individuellement plus faible (OOF 0.9724 vs 0.9794). Signature d'un blend
+  qui fonctionne par décorrélation, pas par force du second modèle.
+
+holdout_caveat: >
+  exp018 a montré que le holdout SOUS-ESTIME massivement les gains de
+  robustesse au décalage : +0.0021 annoncé pour +0.0226 réel (facteur ~11).
+  Il est construit sur le TRAIN (propension moyenne 0.008), donc il ne peut
+  pas mesurer un bénéfice qui ne se manifeste que sur le domaine cible.
+  Historique complet :
+    exp014->015 : +0.0052 -> +0.0073 (x1.4)
+    exp015->016 : +0.0036 -> +0.0041 (x1.1)
+    exp016->017 : +0.0021 -> -0.0003 (circularité pseudo-étiquetage)
+    exp017->018 : +0.0021 -> +0.0226 (x11, robustesse au décalage)
+  Conséquence : le holdout sert de garde-fou (détecter une dégradation), pas
+  d'estimateur d'amplitude. Un gain faible mais positif mérite une soumission.
+
+model_families:
+  gbdt : LightGBM sur 409 features agrégées (base + invariantes)
+  cnn  : Conv1D sur séquences brutes (12 mois x 12 bandes), hidden=32,
+         dropout=0.3 -- meilleure config d'exp018
+  gru  : GRU bidirectionnel sur les mêmes séquences, hidden=32 -- traitement
+         récurrent et non convolutif, donc erreurs a priori encore différentes
+
+n_seeds_nn: 5        # bagging des réseaux (CNN et GRU)
+n_aug: 10
+n_splits: 5
+blend_grid_step: 0.1 # poids sur le simplexe (gbdt, cnn, gru)
+
+stages:
+  1: OOF + prédictions test des 3 familles sur les MÊMES folds, réseaux baggés
+  2: matrice de corrélation TEST entre familles (critère de complémentarité)
+  3: recherche des poids de blend (grid sur le simplexe, jugée sur le holdout)
+  4: pseudo-étiquetage appliqué au meilleur blend, puis ré-entraînement complet
+
+runtime_warning: >
+  Coûteux : 5 folds x (1 GBDT + 5 CNN + 5 GRU) x 2 passes (sans puis avec
+  pseudo-étiquetage) = 110 entraînements de modèles. Prévoir plusieurs heures
+  sur CPU. Lancer en arrière-plan.
+
+output:
+  report_csv: outputs/models/exp019_consolidation.csv
+  correlation_csv: outputs/models/exp019_test_correlations.csv
+  submissions:
+    - exp019_blend_nopl_submission.csv
+    - exp019_blend_pl_submission.csv
+
+decision_rule: >
+  a) Soumettre le blend AVEC pseudo-étiquetage en priorité (cumul attendu des
+     deux gains). Si le LB progresse -> configuration finale.
+  b) Si le GRU est fortement corrélé au CNN sur le TEST (> 0.95), il n'apporte
+     rien : le retirer et garder GBDT + CNN.
+  c) Si le pseudo-étiquetage dégrade cette fois (il interagit avec un blend,
+     pas un modèle seul), soumettre la version sans pseudo-étiquetage.
+  d) Budget : 2 soumissions.
