@@ -1,0 +1,92 @@
+# Configuration de exp017_blend_pseudo
+# Deux gisements combinés, sur un holdout FIGÉ pour restaurer la
+# comparabilité entre expériences.
+
+experiment:
+  name: exp017_blend_pseudo
+  objective: >
+    A) Balayer pseudo_weight (intensité de l'adaptation au domaine cible),
+       jamais testé : figé à 0.5 depuis exp016.
+    B) Reporter le blend LightGBM + XGBoost + CatBoost (exp006/exp009) sur la
+       configuration actuelle -- toute la chaîne exp015-016 tourne sur un
+       SEUL LightGBM.
+  seed: 42
+  features: base + invariantes (409) -- exp015
+  scale_pos_weight: 1.6   # figé, exp013 : levier mort
+  pseudo_conf: 0.90       # meilleur seuil, exp016 (LB 0.8365)
+  pseudo_rounds: 1        # exp016 : le tour 2 dégrade (amplification d'erreurs)
+
+why_these_two_levers: >
+  A) exp016 a montré que les seuils 0.90 et 0.99 donnent le MÊME holdout
+     (0.9489) malgré 838 vs 499 pseudo-étiquettes. Le gain ne vient donc pas
+     du VOLUME ajouté mais de l'ACCÈS au domaine cible. Ce qui suggère que
+     l'intensité de l'adaptation (pseudo_weight) compte plus que le nombre
+     d'échantillons -- or ce paramètre n'a jamais été balayé.
+  B) La diversité a payé deux fois sur ce problème (features invariantes
+     +0.0073 ; domaine cible +0.0041). Le blend multi-familles est le
+     gisement le plus évident encore inexploité : le dernier blend date
+     d'exp009, sur une configuration de features désormais obsolète.
+
+fixed_holdout: >
+  PROBLÈME IDENTIFIÉ À EXP016 : le holdout n'avait pas la même composition
+  entre exp015 (propension calculée sur 245 features) et exp016 (409
+  features) -- d'où un tour 0 à 0.9454 contre 0.9524 annoncé à exp015 pour
+  la MÊME configuration. Les deltas restaient valides, mais les niveaux
+  absolus n'étaient pas comparables d'une expérience à l'autre.
+
+  CORRECTION : le holdout est calculé UNE FOIS sur les features de base
+  (245) et sauvegardé dans outputs/models/exp017_fixed_holdout_groups.csv.
+  Toutes les expériences suivantes doivent le recharger tel quel.
+
+pseudo_weight_grid: [0.25, 0.5, 1.0, 2.0]
+  # 0.5 = valeur d'exp016. 2.0 signifie "fais davantage confiance au domaine
+  # cible qu'à ta période d'origine".
+
+blend_models:
+  - lightgbm  (référence de toute la chaîne exp015-016)
+  - xgboost   (meilleur modèle individuel à exp009 : 0.9754)
+  - catboost  (tuné exp008, seul modèle qu'Optuna ait amélioré : +0.0008)
+
+variants:
+  lgbm_pw{w}      : LightGBM seul, pour chaque pseudo_weight de la grille
+  blend_nopl      : blend 3 modèles, SANS pseudo-étiquetage (isole l'effet blend)
+  blend_pw{best}  : blend 3 modèles + pseudo-étiquetage au meilleur poids
+
+no_early_stopping: >
+  Choix assumé : les modèles sont entraînés à n_estimators fixe, sans early
+  stopping. Raison : l'early stopping exige un eval_set, dont la gestion
+  diffère selon les librairies et interagit mal avec les poids
+  d'échantillons. À n_estimators fixe, les trois familles reçoivent un
+  traitement strictement identique, ce qui est la condition d'une
+  comparaison honnête. Coût : hyperparamètres légèrement sous-optimaux pour
+  chaque modèle pris isolément.
+
+n_aug: 10
+n_splits: 5
+holdout_fraction: 0.25
+
+metrics:
+  holdout_score: >
+    MÉTRIQUE DE DÉCISION. Fiabilité directionnelle établie sur deux
+    transitions consécutives :
+      exp014 -> exp015 : holdout +0.0052, LB +0.0073
+      exp015 -> exp016 : holdout +0.0036, LB +0.0041
+  cv_score: référence optimiste, ne décide de rien.
+
+output:
+  report_csv: outputs/models/exp017_blend_pseudo.csv
+  holdout_csv: outputs/models/exp017_fixed_holdout_groups.csv
+  submissions: exp017_{variante}_submission.csv
+
+decision_rule: >
+  a) Si un pseudo_weight > 0.5 améliore nettement : l'intensité de
+     l'adaptation était bien sous-exploitée -> pousser plus loin (4.0, voire
+     retirer le train de la période A du poids dominant).
+  b) Si le blend améliore : le reporter comme configuration finale et y
+     ajouter le bagging multi-seed.
+  c) Si les deux améliorent : soumettre la combinaison (1 soumission), puis
+     bagging multi-seed par-dessus.
+  d) Si aucun n'améliore : le plafond de cette approche est atteint ; figer
+     exp016 et passer à une famille de modèles réellement différente
+     (réseau temporel 1D sur les séries mensuelles), seule source de
+     diversité encore inexploitée.
