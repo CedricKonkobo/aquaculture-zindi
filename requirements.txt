@@ -11,3 +11,4 @@ optuna
 scipy
 jupyter
 pyyaml
+torch
