@@ -8,6 +8,8 @@ A model that tells aquaculture ponds apart from other land cover using monthly S
 ![Status](https://img.shields.io/badge/status-done-137A52?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3-102A6E?style=flat-square&logo=python&logoColor=white)
 
+[![Report](https://img.shields.io/badge/Report-PDF-102A6E?style=for-the-badge)](docs/report.pdf)
+
 <p align="center">
   <img src="assets/lb_progression.png" alt="Leaderboard score across experiments" width="90%">
   <br><em>Leaderboard score across 20 experiments. Correcting the shift directly failed. Adding diverse features and temporal models worked.</em>
@@ -56,7 +58,7 @@ The 0.9903 run uses 245 features, and later runs on other feature sets gave 0.97
 
 <p align="center">
   <img src="assets/adversarial_top_features.png" alt="Top features separating train and test" width="70%">
-  <br><em>Features that best separate train from test (exp011, LightGBM importance averaged over 5 folds).</em>
+  <br><em>Top 10 features separating train from test (exp011, LightGBM importance averaged over 5 folds).</em>
 </p>
 
 This explained a key observation. Cross-validation stayed around 0.975 while the leaderboard was at 0.820, so cross-validation was not measuring what the test measures.
@@ -126,11 +128,8 @@ Local validation means 5-fold StratifiedGroupKFold cross-validation (CV) for exp
 
 ## Limitations & next steps
 
-- **Covariate shift only.** Adversarial validation measures differences in the inputs, not changes in the link between inputs and labels.
-- **Holdout vs leaderboard.** The test-like holdout ranks models more like the leaderboard than CV does, but it still comes from the training period.
-- **Missing standalone scores.** Leaderboard scores of each model alone were not recorded, so the contribution of each blend member is known only on the holdout.
-- **Unfinished: exp020.** Separate models for radar (Sentinel-1) and optical (Sentinel-2) data reached 0.9687 on the holdout, but no leaderboard score is recorded yet.
-- **Untested ideas:** stacking with logistic regression on out-of-fold predictions; early stopping and dedicated architecture search for the networks; error analysis of the non-pond class; separating the gains from bagging and from the GRU in exp019.
+- **Limitation:** The test-like holdout is still drawn from the training period, and adversarial validation measures only differences in the inputs, not in the link between inputs and labels.
+- **Next step:** exp020 trains separate models for radar (Sentinel-1) and optical (Sentinel-2) data. It reached 0.9687 on the holdout, but has not been scored on the leaderboard.
 
 ## Run it locally
 
