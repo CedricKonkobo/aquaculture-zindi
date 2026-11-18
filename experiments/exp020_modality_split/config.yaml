@@ -1,0 +1,87 @@
+# Configuration de exp020_modality_split
+# Diversité par la NATURE DE L'ENTRÉE (radar vs optique) plutôt que par
+# l'architecture -- fondée sur la physique des capteurs.
+
+experiment:
+  name: exp020_modality_split
+  objective: >
+    Ajouter aux trois modèles actuels des modèles SPÉCIALISÉS PAR MODALITÉ
+    (radar S1 seul, optique S2 seul), mesurer leurs corrélations TEST, et
+    rechercher les poids de blend sur l'ensemble élargi.
+  seed: 42
+  pos_weight / scale_pos_weight: 1.6
+  pseudo_labeling: ABANDONNÉ (exp019 : +0.0003 = bruit une fois le blend en
+                   place ; les deux mécanismes corrigeaient la même faiblesse)
+
+why_modality_and_not_architecture: >
+  exp019 a livré la structure des corrélations (écart OOF -> TEST) :
+    arbres vs convolution   : 0.9752 -> 0.8883  (écart -0.087)
+    arbres vs récurrent     : 0.9635 -> 0.9016  (écart -0.062)
+    convolution vs récurrent: 0.9813 -> 0.9492  (écart -0.032)
+  Plus les familles sont CONCEPTUELLEMENT ÉLOIGNÉES, plus elles se
+  décorrèlent sur le test, et plus le blend gagne. CNN et GRU sont deux
+  réseaux nourris du MÊME tenseur : leur marge de complémentarité est la plus
+  faible des trois. Varier l'architecture donne donc des rendements
+  décroissants.
+
+  Le prochain axe de diversité est la NATURE DE L'ENTRÉE.
+
+physical_justification: >
+  Sentinel-1 (VH, VV) mesure la rugosité de surface par radar actif : traverse
+  les nuages, insensible à l'éclairement solaire, peu sensible à la saison.
+  Sentinel-2 mesure la réflectance optique passive : fortement dépendante de
+  la phénologie, de l'angle solaire, de l'état atmosphérique.
+
+  Ces deux modalités NE SE DÉGRADENT PAS DE LA MÊME FAÇON quand la période
+  change. C'est exactement le mécanisme exploité depuis exp018, mais fondé
+  sur la physique du capteur plutôt que sur l'algorithme.
+
+  PRÉDICTION TESTABLE : la paire radar/optique doit montrer la décorrélation
+  TEST la plus forte de toutes celles mesurées jusqu'ici (référence à battre :
+  écart -0.087 pour arbres vs convolution).
+
+models:
+  gbdt_all : LightGBM, toutes features (référence exp019)
+  cnn_all  : CNN, toutes bandes (référence exp019)
+  gru_all  : GRU, toutes bandes (référence exp019)
+  gbdt_s1  : LightGBM sur les seules features dérivées du radar
+  gbdt_s2  : LightGBM sur les seules features dérivées de l'optique
+  cnn_s1   : CNN sur le tenseur radar seul (VH, VV + masques)
+  cnn_s2   : CNN sur le tenseur optique seul (10 bandes + masques)
+
+feature_split: >
+  Les features "radar" sont celles dont le préfixe de série relève de S1
+  (VH, VV, VH_VV_diff, VH_VV_ratio, RVI) ; les "optiques" relèvent de S2
+  (bandes + indices spectraux). Les features de contexte (n_s1, n_s2,
+  frac_cloud, water_frac, ndvi_low_frac) sont attribuées aux deux, étant
+  peu coûteuses et informatives sur la structure d'acquisition.
+
+n_seeds_nn: 10   # exp019 : le bagging 5 seeds a fait passer le CNN de
+                 # 0.9724 à 0.9750 en OOF -> contribution nette, on double
+n_aug: 10
+n_splits: 5
+blend_search: >
+  7 modèles : le grid exhaustif sur le simplexe est trop coûteux. Recherche
+  gloutonne ascendante (greedy forward selection avec répétition), méthode
+  standard d'ensembling : on part du meilleur modèle seul et on ajoute
+  itérativement celui qui améliore le plus le holdout, les poids résultant
+  des multiplicités de sélection.
+
+output:
+  report_csv: outputs/models/exp020_modality.csv
+  correlation_csv: outputs/models/exp020_correlations.csv
+  submissions:
+    - exp020_blend_greedy_submission.csv
+    - exp020_blend_equal7_submission.csv   # contrôle : poids égaux
+
+decision_rule: >
+  a) Si la paire radar/optique montre l'écart OOF->TEST le plus grand ET que
+     le blend élargi bat le holdout d'exp019 (0.9676) : soumettre, la
+     prédiction physique est validée.
+  b) Si les modèles par modalité sont trop faibles individuellement pour
+     entrer dans le blend glouton : la modalité seule ne suffit pas, mais
+     mesurer quand même leurs corrélations (information utile pour le
+     rapport).
+  c) Contrôle systématique par un blend à poids égaux : la sélection gloutonne
+     peut sur-ajuster le holdout, un blend uniforme est plus robuste.
+  d) Budget : 2 soumissions.
