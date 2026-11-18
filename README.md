@@ -1,5 +1,4 @@
-<!-- Add assets/banner.png (1280 × 400), then uncomment the next line. -->
-<!-- <img src="assets/banner.png" alt="Aquaculture pond detection from satellite time series" width="100%"> -->
+<img src="assets/banner.png" alt="Aquaculture pond detection from Sentinel-1/2 time series under temporal shift" width="100%">
 
 # Aquaculture pond detection from satellite time series (Zindi GeoAI competition)
 
@@ -7,8 +6,11 @@ A model that tells aquaculture ponds apart from other land cover using monthly S
 
 ![Status](https://img.shields.io/badge/status-done-137A52?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3-102A6E?style=flat-square&logo=python&logoColor=white)
+![Experiments](https://img.shields.io/badge/experiments-20_documented-102A6E?style=flat-square)
 
 [![Report](https://img.shields.io/badge/Report-PDF-102A6E?style=for-the-badge)](docs/report.pdf)
+[![Experiment log](https://img.shields.io/badge/Experiment_log-20_runs-1E5BD8?style=for-the-badge)](#experiment-log)
+[![Competition](https://img.shields.io/badge/Competition-Zindi-102A6E?style=for-the-badge)](https://zindi.africa/competitions/geoai-aquaculture-pond-identification-challenge)
 
 <p align="center">
   <img src="assets/lb_progression.png" alt="Leaderboard score across experiments" width="90%">
@@ -17,6 +19,7 @@ A model that tells aquaculture ponds apart from other land cover using monthly S
 
 ## TL;DR
 
+- **Question:** Can a model trained on 12 full months of satellite data stay reliable on a later period where only 4 to 6 months are observed, with cloud gaps?
 - **Problem:** Classify 10 m × 10 m patches as aquaculture pond or not. The model is trained on 12 months of data and tested on a different period that covers only 4 to 6 months, with cloud gaps.
 - **Solution:** Adversarial validation to measure the train/test shift, a validation set that looks like the test, and a blend of gradient boosting, 1D CNN and GRU models.
 - **Result:** Leaderboard score raised from 0.820 to 0.873 over 20 documented experiments. **Top 28% (172/609).**
@@ -25,7 +28,7 @@ A model that tells aquaculture ponds apart from other land cover using monthly S
 
 | Competition | Platform | Rank | Participants | Metric |
 |---|---|---|---|---|
-| Aquaculture Pond Identification (Zindi GeoAI) | Zindi | **172** | 609 | 0.6 · F1 + 0.4 · ROC-AUC = 0.873 |
+| [GeoAI Aquaculture Pond Identification Challenge](https://zindi.africa/competitions/geoai-aquaculture-pond-identification-challenge) | Zindi | **172** | 609 | 0.6 · F1 + 0.4 · ROC-AUC = 0.873 |
 
 The leaderboard metric weights F1 at 60% and ROC-AUC at 40%. The binary prediction must use the fixed 0.5 threshold: tuning the threshold is forbidden by the rules.
 
@@ -162,6 +165,13 @@ aquaculture-zindi/
 └── README.md
 ```
 
+## References
+
+1. Zindi, [GeoAI Aquaculture Pond Identification Challenge](https://zindi.africa/competitions/geoai-aquaculture-pond-identification-challenge): data, rules and metric.
+2. G. Ke et al., *LightGBM: A Highly Efficient Gradient Boosting Decision Tree*, NeurIPS 2017.
+3. K. Cho et al., *Learning Phrase Representations using RNN Encoder–Decoder for Statistical Machine Translation*, EMNLP 2014 (GRU).
+4. D.-H. Lee, *Pseudo-Label: The Simple and Efficient Semi-Supervised Learning Method for Deep Neural Networks*, ICML Workshop on Challenges in Representation Learning, 2013.
+
 ---
 
-**Cédric Konkobo** · AI & Data Engineering, ENSAM Rabat · [GitHub](https://github.com/CedricKonkobo)
+**Cédric Konkobo** · AI & Data Engineering, ENSAM Rabat · [GitHub](https://github.com/CedricKonkobo) · [LinkedIn](https://www.linkedin.com/in/VOTRE-PROFIL)
